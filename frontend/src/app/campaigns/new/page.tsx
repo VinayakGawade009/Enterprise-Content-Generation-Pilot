@@ -2,6 +2,8 @@
 
 import { useRouter } from 'next/navigation';
 import { useState, useRef } from 'react';
+import { useMutation, useQuery } from 'convex/react';
+import { api } from '../../../../convex/_generated/api';
 
 // ─── Types ─────────────────────────────────────────────────────
 type OutputType = 'LinkedIn' | 'Instagram' | 'Facebook' | 'Blog';
@@ -99,17 +101,20 @@ export default function NewCampaignPage() {
   const [files, setFiles] = useState<File[]>([]);
   const [selectedRegions, setSelectedRegions] = useState<string[]>(['North America']);
   const [selectedPersona, setSelectedPersona] = useState('DevOps Engineers');
+  const [enableLocalization, setEnableLocalization] = useState(false);
+  const [selectedLanguage, setSelectedLanguage] = useState('Hindi');
   const [isLaunching, setIsLaunching] = useState(false);
 
-  /**
-   * TODO — CONVEX QUERY: Fetch approved regions and personas from workspace
-   *
-   *   const workspace = useQuery(api.workspace.getMyWorkspace);
-   *   const approvedRegions = workspace?.market_identity.approved_regions ?? [];
-   *   const approvedPersonas = workspace?.market_identity.approved_personas ?? [];
-   */
-  const MOCK_REGIONS = ['North America', 'EMEA', 'APAC', 'LatAm'];
-  const MOCK_PERSONAS = ['DevOps Engineers', 'CTOs & VPs', 'Fitness Enthusiasts', 'Everyday Wellness Seekers'];
+  const createCampaign = useMutation(api.campaigns.create);
+  const workspace = useQuery(api.workspace.getMyWorkspace);
+
+  const approvedRegions = workspace?.market_identity.approved_regions ?? [];
+  const approvedPersonas = workspace?.market_identity.approved_personas ?? [];
+
+  const REGIONS = approvedRegions.map(r => r.name);
+  const PERSONAS = approvedPersonas.map(p => p.name);
+  
+  const OUTPUT_TYPES = ['Social Media', 'Email', 'Display Ads', 'Video Ads'];
 
   const toggleRegion = (r: string) =>
     setSelectedRegions((prev) => prev.includes(r) ? prev.filter((x) => x !== r) : [...prev, r]);
@@ -118,31 +123,37 @@ export default function NewCampaignPage() {
     if (!objective.trim()) return;
     setIsLaunching(true);
 
-    /**
-     * TODO — CONVEX MUTATION + FASTAPI CALL: createCampaignAndInitiate
-     *
-     * 1. Create campaign record in Convex:
-     *    const campaignId = await convex.mutation(api.campaigns.create, {
-     *      campaign_brief: {
-     *        campaign_id: crypto.randomUUID(),
-     *        initiated_by: currentUser._id,
-     *        creative_objective: objective,
-     *        target_regions: selectedRegions,
-     *        target_personas: [selectedPersona],
-     *        desired_formats: [`${outputType}_${format}`],
-     *      },
-     *      status: 'DRAFTING',
-     *    });
-     *
-     * 2. POST to FastAPI to initiate the LangGraph pipeline:
-     *    await fetch('/api/initiate-campaign', {
-     *      method: 'POST',
-     *      body: JSON.stringify({ campaign_id: campaignId, ... }),
-     *    });
-     */
+    const campaignBrief = {
+      campaign_id: Math.random().toString(36).substring(7),
+      initiated_by: "user_001", // Placeholder
+      creative_objective: objective,
+      target_regions: selectedRegions,
+      target_personas: [selectedPersona],
+      desired_formats: [`${outputType}_${format}`],
+      enable_localization: enableLocalization,
+      selected_language: enableLocalization ? selectedLanguage : undefined,
+    };
 
-    await new Promise((r) => setTimeout(r, 800));
-    router.push('/campaigns/camp_new_001/execute');
+    try {
+      const campaignId = await createCampaign({
+        campaign_brief: campaignBrief,
+      });
+
+      const response = await fetch('http://localhost:8000/api/campaign/initiate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          db_id: campaignId,
+          ...campaignBrief,
+        }),
+      });
+
+      if (!response.ok) throw new Error('Failed to initiate backend');
+      router.push(`/campaigns/${campaignId}/execute`);
+    } catch (err) {
+      console.error(err);
+      setIsLaunching(false);
+    }
   };
 
   const chatMessages = [
@@ -224,9 +235,8 @@ export default function NewCampaignPage() {
 
           <div>
             <label className="input-label mb-2 block">Target Regions</label>
-            {/* TODO — CONVEX: Replace MOCK_REGIONS with workspace.market_identity.approved_regions */}
             <div className="flex flex-wrap gap-2">
-              {MOCK_REGIONS.map((r) => (
+              {REGIONS.map((r) => (
                 <button
                   key={r}
                   id={`region-${r.toLowerCase().replace(/\s/g, '-')}`}
@@ -246,27 +256,60 @@ export default function NewCampaignPage() {
 
           <div>
             <label className="input-label mb-2 block">Target Persona</label>
-            {/* TODO — CONVEX: Replace MOCK_PERSONAS with workspace.market_identity.approved_personas */}
             <ToggleChip<string>
               id="persona"
-              options={MOCK_PERSONAS}
+              options={PERSONAS}
               value={selectedPersona}
               onChange={setSelectedPersona}
             />
           </div>
 
-          <div className="flex items-center gap-3 pt-1 border-t border-slate-800/60">
-            <input
-              id="create-captions"
-              type="checkbox"
-              checked={createCaptions}
-              onChange={(e) => setCreateCaptions(e.target.checked)}
-              className="w-4 h-4 rounded accent-indigo-500 cursor-pointer"
-            />
-            <label htmlFor="create-captions" className="text-sm text-slate-300 cursor-pointer">
-              Create captions for the post
-              <span className="ml-2 text-xs text-slate-500">(Automatically generates platform-optimized copy with hashtags)</span>
-            </label>
+          <div className="flex flex-col gap-4 pt-1 border-t border-slate-800/60">
+            <div className="flex items-center gap-3">
+              <input
+                id="create-captions"
+                type="checkbox"
+                checked={createCaptions}
+                onChange={(e) => setCreateCaptions(e.target.checked)}
+                className="w-4 h-4 rounded accent-indigo-500 cursor-pointer"
+              />
+              <label htmlFor="create-captions" className="text-sm text-slate-300 cursor-pointer">
+                Create captions for the post
+                <span className="ml-2 text-xs text-slate-500">(Automatically generates platform-optimized copy with hashtags)</span>
+              </label>
+            </div>
+
+            <div className="flex flex-col gap-3">
+              <div className="flex items-center gap-3">
+                <input
+                  id="enable-localization"
+                  type="checkbox"
+                  checked={enableLocalization}
+                  onChange={(e) => setEnableLocalization(e.target.checked)}
+                  className="w-4 h-4 rounded accent-violet-500 cursor-pointer"
+                />
+                <label htmlFor="enable-localization" className="text-sm text-slate-300 font-medium cursor-pointer">
+                  Enable Regional Localization
+                  <span className="ml-2 text-xs text-slate-500">(Transcreate content for regional Indian markets)</span>
+                </label>
+              </div>
+
+              {enableLocalization && (
+                <div className="ml-7 animate-in fade-in slide-in-from-top-2 duration-300">
+                  <label className="text-[10px] uppercase font-bold text-slate-500 tracking-wider mb-2 block">Target Indian Language</label>
+                  <ToggleChip<string>
+                    id="selected-language"
+                    options={[
+                      'Hindi', 'Bengali', 'Telugu', 'Marathi',
+                      'Tamil', 'Urdu', 'Gujarati', 'Kannada',
+                      'Odia', 'Malayalam', 'Punjabi', 'Assamese'
+                    ]}
+                    value={selectedLanguage}
+                    onChange={setSelectedLanguage}
+                  />
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
@@ -276,6 +319,7 @@ export default function NewCampaignPage() {
           <span className="badge-violet">🎬 {format}</span>
           <span className="badge-indigo">🌍 {selectedRegions.join(', ')}</span>
           <span className="badge-violet">👤 {selectedPersona}</span>
+          {enableLocalization && <span className="badge-violet">🇮🇳 {selectedLanguage}</span>}
           {createCaptions && <span className="badge-emerald">✍ Captions</span>}
           {files.length > 0 && <span className="badge-amber">📎 {files.length} asset{files.length !== 1 ? 's' : ''}</span>}
         </div>

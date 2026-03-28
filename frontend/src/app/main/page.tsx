@@ -3,6 +3,9 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import { useQuery } from 'convex/react';
+import { api } from '../../../convex/_generated/api';
+import { Doc } from '../../../convex/_generated/dataModel';
 
 // ─── Types ────────────────────────────────────────────────────
 interface Campaign {
@@ -14,26 +17,23 @@ interface Campaign {
   persona: string;
 }
 
-// ─── Mock Data (replace with Convex query) ────────────────────
-const MOCK_CAMPAIGNS: Campaign[] = [
-  { id: 'camp_001', name: 'AutoHeal Agent Launch', status: 'PENDING_GATE_1', format: 'LinkedIn Video · Email', updated: '2m ago', persona: 'DevOps Engineers' },
-  { id: 'camp_002', name: 'Q4 Product Announcement', status: 'PUBLISHED', format: 'Instagram Reel', updated: '1d ago', persona: 'CTOs & VPs' },
-  { id: 'camp_003', name: 'PulseFit Pro — EMEA Launch', status: 'PENDING_GATE_2', format: 'Email Banner · Blog', updated: '3d ago', persona: 'Fitness Enthusiasts' },
-  { id: 'camp_004', name: 'DevOps Webinar Promo', status: 'REJECTED', format: 'LinkedIn · Facebook', updated: '5d ago', persona: 'DevOps Engineers' },
-  { id: 'camp_005', name: 'End-of-Year Summary Post', status: 'DRAFTING', format: 'Blog · LinkedIn', updated: '6d ago', persona: 'CTOs & VPs' },
-];
+// Removed MOCK_CAMPAIGNS
 
 // ─── Status Badge Renderer ────────────────────────────────────
 function StatusBadge({ status }: { status: Campaign['status'] }) {
-  const map: Record<Campaign['status'], { label: string; className: string; dot: string }> = {
+  const map: Record<string, { label: string; className: string; dot: string }> = {
     PENDING_GATE_1: { label: 'Gate 1 Review', className: 'badge-amber', dot: 'status-dot-pending' },
     PENDING_GATE_2: { label: 'Gate 2 Review', className: 'badge-amber', dot: 'status-dot-pending' },
     PENDING_GATE_3: { label: 'Gate 3 Review', className: 'badge-amber', dot: 'status-dot-pending' },
     PUBLISHED: { label: 'Published', className: 'badge-emerald', dot: 'status-dot-active' },
     DRAFTING: { label: 'Drafting…', className: 'badge-indigo', dot: 'status-dot-pending' },
     REJECTED: { label: 'Rejected', className: 'badge-rose', dot: 'status-dot-idle' },
+    PROCESSING: { label: 'Processing…', className: 'badge-indigo', dot: 'status-dot-pending' },
+    GATE_1_TEXT: { label: 'Text Review', className: 'badge-amber', dot: 'status-dot-pending' },
+    GATE_2_LOCALIZATION: { label: 'Locale Review', className: 'badge-amber', dot: 'status-dot-pending' },
+    GATE_4_VISUALS: { label: 'Visual Review', className: 'badge-amber', dot: 'status-dot-pending' },
   };
-  const { label, className, dot } = map[status];
+  const { label, className, dot } = map[status] || { label: status, className: 'badge-slate', dot: 'status-dot-idle' };
   return (
     <span className={`${className} gap-2`}>
       <span className={dot} />
@@ -123,13 +123,17 @@ function SettingsMenu() {
 
 // ─── Main Dashboard ────────────────────────────────────────────
 export default function MainDashboard() {
-  /**
-   * TODO — CONVEX QUERY: Fetch recent campaigns
-   *
-   *   const campaigns = useQuery(api.campaigns.getRecentCampaigns, { limit: 10 });
-   *   // Returns array of campaign documents sorted by _creationTime desc
-   */
-  const campaigns = MOCK_CAMPAIGNS;
+  const campaignsData = useQuery(api.campaigns.getRecent, { limit: 10 });
+
+  // Map Convex docs to UI interface
+  const campaigns: Campaign[] = campaignsData ? campaignsData.map((doc) => ({
+    id: doc._id,
+    name: doc.campaign_brief.creative_objective.slice(0, 40) + '...',
+    status: doc.status as any,
+    format: doc.campaign_brief.desired_formats.join(' · '),
+    updated: new Date(doc._creationTime).toLocaleTimeString(),
+    persona: doc.campaign_brief.target_personas.join(', '),
+  })) : [];
 
   const stats = [
     { label: 'Active Campaigns', value: '3', icon: '🚀', delta: '+2 this week' },
@@ -213,9 +217,34 @@ export default function MainDashboard() {
             <span className="badge-indigo">{campaigns.length} total</span>
           </div>
 
-          {/* TODO — CONVEX QUERY: Replace MOCK_CAMPAIGNS with useQuery(api.campaigns.getRecentCampaigns) */}
           <div className="space-y-2">
-            {campaigns.map((c) => <CampaignRow key={c.id} campaign={c} />)}
+            {campaignsData === undefined ? (
+              <div className="glass-card p-8 flex flex-col items-center justify-center text-slate-400">
+                <svg className="w-8 h-8 animate-spin mb-3 text-indigo-500" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                </svg>
+                <p className="text-sm font-medium text-slate-300">Loading campaigns...</p>
+              </div>
+            ) : campaignsData.length === 0 ? (
+              <div className="glass-card p-10 flex flex-col items-center justify-center text-center">
+                <div className="w-16 h-16 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center mb-4">
+                  <svg className="w-8 h-8 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3v11.25A2.25 2.25 0 006 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0118 16.5h-2.25m-7.5 0h7.5m-7.5 0l-1 3m8.5-3 1 3m0 0 .5 1.5m-.5-1.5h-9.5m0 0-.5 1.5m.75-9 3-3 2.148 2.148A12.061 12.061 0 0116.5 7.605" />
+                  </svg>
+                </div>
+                <h3 className="text-lg font-semibold text-white mb-1">No recent campaigns found.</h3>
+                <p className="text-sm text-slate-400 mb-6 font-medium">Create your first one to kick off the pipeline!</p>
+                <Link href="/campaigns/new" className="btn-primary space-x-2">
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                  </svg>
+                  <span>Build Campaign</span>
+                </Link>
+              </div>
+            ) : (
+              campaigns.map((c) => <CampaignRow key={c.id} campaign={c} />)
+            )}
           </div>
         </div>
 

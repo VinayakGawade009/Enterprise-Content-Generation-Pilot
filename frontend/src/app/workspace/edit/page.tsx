@@ -13,7 +13,9 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useQuery, useMutation } from 'convex/react';
+import { api } from '../../../../convex/_generated/api';
 
 interface Region { id: string; name: string; locales: string[] }
 interface Persona { id: string; name: string }
@@ -76,61 +78,59 @@ export default function WorkspaceEditPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [savedSuccess, setSavedSuccess] = useState(false);
 
-  /**
-   * TODO — CONVEX QUERY: Pre-populate all fields from existing workspace
-   *
-   *   const workspace = useQuery(api.workspace.getMyWorkspace);
-   *
-   *   useEffect(() => {
-   *     if (workspace) {
-   *       setBusinessModel(workspace.market_identity.business_model);
-   *       setRegions(workspace.market_identity.approved_regions);
-   *       setPersonas(workspace.market_identity.approved_personas);
-   *       setPrimaryHex(workspace.brand_guidelines.colors.primary_hex);
-   *       setSecondaryHex(workspace.brand_guidelines.colors.secondary_hex);
-   *       setPrimaryFont(workspace.brand_guidelines.typography.primary_font);
-   *       setForbiddenPhrases(workspace.compliance_rules.forbidden_phrases);
-   *     }
-   *   }, [workspace]);
-   */
+  const workspace = useQuery(api.workspace.getMyWorkspace);
+  const createOrUpdateWorkspace = useMutation(api.workspace.createOrUpdateWorkspace);
 
-  // Pre-populated mock data (replace with Convex query results)
   const [businessModel, setBusinessModel] = useState<'B2B' | 'B2C' | 'Hybrid'>('B2B');
-  const [regions, setRegions] = useState<Region[]>([
-    { id: 'reg_na', name: 'North America', locales: ['en_US'] },
-    { id: 'reg_emea', name: 'EMEA', locales: ['en_GB', 'es_ES', 'de_DE'] },
-  ]);
-  const [personas, setPersonas] = useState<Persona[]>([
-    { id: 'per_devops', name: 'DevOps Engineers' },
-    { id: 'per_cto', name: 'CTOs & VPs of Engineering' },
-  ]);
+  const [regions, setRegions] = useState<Region[]>([]);
+  const [personas, setPersonas] = useState<Persona[]>([]);
   const [newRegion, setNewRegion] = useState('');
   const [newPersona, setNewPersona] = useState('');
   const [primaryHex, setPrimaryHex] = useState('#6366f1');
   const [secondaryHex, setSecondaryHex] = useState('#a855f7');
   const [primaryFont, setPrimaryFont] = useState('Inter, sans-serif');
-  const [forbiddenPhrases, setForbiddenPhrases] = useState(['100% accurate', 'bulletproof', 'replaces developers', 'AGI']);
+  const [forbiddenPhrases, setForbiddenPhrases] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (workspace) {
+      setBusinessModel(workspace.market_identity.business_model as any);
+      setRegions(workspace.market_identity.approved_regions);
+      setPersonas(workspace.market_identity.approved_personas);
+      setPrimaryHex(workspace.brand_guidelines.colors.primary_hex);
+      setSecondaryHex(workspace.brand_guidelines.colors.secondary_hex);
+      setPrimaryFont(workspace.brand_guidelines.typography.primary_font);
+      setForbiddenPhrases(workspace.compliance_rules.forbidden_phrases);
+    }
+  }, [workspace]);
 
   const handleSave = async () => {
     setIsSaving(true);
-    /**
-     * TODO — CONVEX MUTATION: updateWorkspaceRules
-     *
-     *   await convex.mutation(api.workspace.updateWorkspaceRules, {
-     *     workspaceId: workspace._id,
-     *     market_identity: { business_model: businessModel, approved_regions: regions, approved_personas: personas },
-     *     brand_guidelines: {
-     *       colors: { primary_hex: primaryHex, secondary_hex: secondaryHex },
-     *       typography: { primary_font: primaryFont, secondary_font: 'Arial, sans-serif' },
-     *       assets: { logo_urls: [] },
-     *     },
-     *     compliance_rules: { forbidden_phrases: forbiddenPhrases, mandatory_disclaimers_by_region: {}, mandatory_disclaimers_by_topic: {} },
-     *   });
-     */
-    await new Promise((r) => setTimeout(r, 800));
-    setIsSaving(false);
-    setSavedSuccess(true);
-    setTimeout(() => setSavedSuccess(false), 3000);
+    try {
+      await createOrUpdateWorkspace({
+        market_identity: {
+          workspace_id: workspace?.market_identity.workspace_id || crypto.randomUUID(),
+          business_model: businessModel,
+          approved_regions: regions,
+          approved_personas: personas,
+        },
+        brand_guidelines: {
+          colors: { primary_hex: primaryHex, secondary_hex: secondaryHex },
+          typography: { primary_font: primaryFont, secondary_font: 'Arial, sans-serif' },
+          assets: { logo_urls: workspace?.brand_guidelines.assets.logo_urls || [] },
+        },
+        compliance_rules: {
+          forbidden_phrases: forbiddenPhrases,
+          mandatory_disclaimers_by_region: workspace?.compliance_rules.mandatory_disclaimers_by_region || {},
+          mandatory_disclaimers_by_topic: workspace?.compliance_rules.mandatory_disclaimers_by_topic || {},
+        },
+      });
+      setSavedSuccess(true);
+      setTimeout(() => setSavedSuccess(false), 3000);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const addRegion = () => { if (newRegion.trim()) { setRegions((p) => [...p, { id: `reg_${Date.now()}`, name: newRegion.trim(), locales: ['en_US'] }]); setNewRegion(''); } };

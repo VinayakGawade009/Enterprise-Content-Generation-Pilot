@@ -2,6 +2,9 @@
 
 import Link from 'next/link';
 import { useState, useEffect, useRef, use } from 'react';
+import { useQuery } from 'convex/react';
+import { api } from '../../../../../convex/_generated/api';
+import { Id } from '../../../../../convex/_generated/dataModel';
 
 // ───────────────────────────────────────────────────────────────
 // TYPES
@@ -20,37 +23,7 @@ interface FeedbackState {
   text: string;
 }
 
-// ───────────────────────────────────────────────────────────────
-// MOCK DATA
-// ───────────────────────────────────────────────────────────────
-const MOCK_MASTER_TEXT = {
-  headline: 'Stop manually debugging broken PRs.',
-  body: 'The AutoHeal Agent is now generally available. Integrating natively with GitHub Actions, it autonomously resolves code repository errors and manages safe deployments to your AWS EC2 infrastructure. Reclaim your engineering hours.',
-};
-
-const MOCK_LOCALIZED_TEXT = {
-  en_US: {
-    headline: 'Stop manually debugging broken PRs.',
-    body: 'The AutoHeal Agent is now generally available. Integrating natively with GitHub Actions...',
-    char_count: 243,
-  },
-  es_ES: {
-    headline: 'Deje de depurar manualmente los PR rotos.',
-    body: 'El AutoHeal Agent ya está disponible. Integrándose de forma nativa con GitHub Actions, resuelve de forma autónoma errores de repositorios...',
-    char_count: 261,
-  },
-  de_DE: {
-    headline: 'Schluss mit dem manuellen Debuggen fehlerhafter PRs.',
-    body: 'Der AutoHeal Agent ist jetzt allgemein verfügbar. Er integriert sich nativ in GitHub Actions und behebt Repositoryfehler autonom...',
-    char_count: 237,
-  },
-};
-
-const MOCK_VISUAL_ASSETS = [
-  { id: 'v1', locale: 'en_US', format: 'LinkedIn Video', url: null, status: 'generating' },
-  { id: 'v2', locale: 'es_ES', format: 'LinkedIn Video', url: null, status: 'generating' },
-  { id: 'v3', locale: 'en_US', format: 'Email Banner', url: null, status: 'done' },
-];
+// Removed MOCK_DATA blocks
 
 // ───────────────────────────────────────────────────────────────
 // PIPELINE PHASES per state
@@ -156,7 +129,10 @@ function PipelinePanel({ state, elapsedMs }: { state: ExecutionState; elapsedMs:
 // ───────────────────────────────────────────────────────────────
 // HITL REVIEW PANEL — Gate 1 (Master Text)
 // ───────────────────────────────────────────────────────────────
-function Gate1TextReview({ onApprove, onReject, onRegenerate }: {
+function Gate1TextReview({ campaignId, masterText, textAudit, onApprove, onReject, onRegenerate }: {
+  campaignId: string;
+  masterText: any;
+  textAudit: any;
   onApprove: () => void;
   onReject: () => void;
   onRegenerate: (feedback?: string) => void;
@@ -177,28 +153,32 @@ function Gate1TextReview({ onApprove, onReject, onRegenerate }: {
 
       <div className="flex-1 overflow-y-auto p-5 space-y-4">
         {/* Governance audit passed banner */}
-        <div className="flex items-start gap-3 p-3 rounded-lg bg-emerald-500/8 border border-emerald-500/20">
-          <svg className="w-4 h-4 text-emerald-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" />
+        <div className={`flex items-start gap-3 p-3 rounded-lg ${textAudit?.status === 'PASSED' ? 'bg-emerald-500/8 border border-emerald-500/20' : 'bg-rose-500/8 border border-rose-500/20'}`}>
+          <svg className={`w-4 h-4 flex-shrink-0 mt-0.5 ${textAudit?.status === 'PASSED' ? 'text-emerald-400' : 'text-rose-400'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            {textAudit?.status === 'PASSED' ? (
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" />
+            ) : (
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+            )}
           </svg>
           <div>
-            <p className="text-xs font-semibold text-emerald-300">Textual Governance Passed</p>
-            <p className="text-[10px] text-slate-400 mt-0.5">0 forbidden phrases detected · Mandatory disclaimers: N/A for this region</p>
+            <p className={`text-xs font-semibold ${textAudit?.status === 'PASSED' ? 'text-emerald-300' : 'text-rose-300'}`}>
+              Textual Governance {textAudit?.status || 'Pending'}
+            </p>
+            <p className="text-[10px] text-slate-400 mt-0.5">
+              {textAudit?.violations?.length || 0} violations detected · {textAudit?.violations?.map((v: any) => v.phrase).join(', ') || 'N/A'}
+            </p>
           </div>
         </div>
 
         {/* Generated text */}
         <div className="glass-card-sm p-5 space-y-3">
           <div>
-            <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Headline</span>
-            <p className="mt-1 text-lg font-bold text-white">{MOCK_MASTER_TEXT.headline}</p>
-          </div>
-          <div>
-            <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Body Copy</span>
-            <p className="mt-1 text-sm text-slate-300 leading-relaxed">{MOCK_MASTER_TEXT.body}</p>
+            <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Master Text Draft</span>
+            <p className="mt-1 text-lg font-bold text-white leading-tight">{masterText?.text || 'Generating...'}</p>
           </div>
           <div className="flex items-center gap-3 pt-2 border-t border-slate-700/50">
-            <span className="text-[10px] text-slate-500">Character count: <strong className="text-slate-400">243</strong></span>
+            <span className="text-[10px] text-slate-500">Character count: <strong className="text-slate-400">{masterText?.character_count || 0}</strong></span>
             <span className="text-[10px] text-slate-500">Model: gpt-4o</span>
           </div>
         </div>
@@ -265,15 +245,23 @@ function Gate1TextReview({ onApprove, onReject, onRegenerate }: {
 // ───────────────────────────────────────────────────────────────
 // HITL REVIEW PANEL — Gate 2 (Localization)
 // ───────────────────────────────────────────────────────────────
-function Gate2LocalizationReview({ onApprove, onReject, onRegenerate }: {
+function Gate2LocalizationReview({ localizedTexts, regionalAudit, onApprove, onReject, onRegenerate }: {
+  localizedTexts: any;
+  regionalAudit: any;
   onApprove: () => void;
   onReject: () => void;
   onRegenerate: (feedback?: string) => void;
 }) {
-  const locales = Object.entries(MOCK_LOCALIZED_TEXT);
-  const [activeLocale, setActiveLocale] = useState(locales[0][0]);
+  const translations = localizedTexts?.translations || {};
+  const locales = Object.keys(translations);
+  const [activeLocale, setActiveLocale] = useState(locales[0] || '');
   const [feedback, setFeedback] = useState<FeedbackState>({ open: false, text: '' });
-  const active = MOCK_LOCALIZED_TEXT[activeLocale as keyof typeof MOCK_LOCALIZED_TEXT];
+  const active = translations[activeLocale];
+
+  // Update activeLocale if it's empty but locales are available
+  useEffect(() => {
+    if (!activeLocale && locales.length > 0) setActiveLocale(locales[0]);
+  }, [locales, activeLocale]);
 
   return (
     <div className="flex flex-col h-full animate-in">
@@ -316,22 +304,23 @@ function Gate2LocalizationReview({ onApprove, onReject, onRegenerate }: {
         </div>
 
         {/* Locale content */}
-        <div className="glass-card-sm p-5 space-y-3">
-          <div>
-            <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Headline ({activeLocale})</span>
-            <p className="mt-1 text-lg font-bold text-white">{active.headline}</p>
+        {active ? (
+          <div className="glass-card-sm p-5 space-y-3">
+            <div>
+              <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Transcreated Text ({activeLocale})</span>
+              <p className="mt-1 text-base text-white leading-relaxed">{active.text}</p>
+            </div>
+            <div className="flex items-center gap-3 pt-2 border-t border-slate-700/50">
+              <span className="text-[10px] text-slate-500">
+                Character count: <strong className="text-slate-400">{localizedTexts?.character_counts?.[activeLocale] || 0}</strong>
+              </span>
+            </div>
           </div>
-          <div>
-            <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Body</span>
-            <p className="mt-1 text-sm text-slate-300 leading-relaxed">{active.body}</p>
+        ) : (
+          <div className="p-8 text-center text-slate-500 italic text-sm">
+            No localization data available for this campaign yet.
           </div>
-          <div className="flex items-center gap-3 pt-2 border-t border-slate-700/50">
-            <span className="text-[10px] text-slate-500">
-              Character count: <strong className={`${active.char_count > 250 ? 'text-amber-400' : 'text-emerald-400'}`}>{active.char_count}</strong>
-              {active.char_count > 250 && <span className="text-amber-400 ml-1">⚠ Near limit</span>}
-            </span>
-          </div>
-        </div>
+        )}
 
         {feedback.open && (
           <div className="space-y-2 animate-in">
@@ -371,7 +360,8 @@ function Gate2LocalizationReview({ onApprove, onReject, onRegenerate }: {
 // ───────────────────────────────────────────────────────────────
 // STATE 4 — Visuals Panel
 // ───────────────────────────────────────────────────────────────
-function VisualsPanel() {
+function VisualsPanel({ visualAssets }: { visualAssets: any[] }) {
+  const assets = visualAssets || [];
   return (
     <div className="flex flex-col h-full animate-in">
       <div className="p-5 border-b border-slate-800/60">
@@ -386,12 +376,12 @@ function VisualsPanel() {
 
       <div className="flex-1 overflow-y-auto p-5 space-y-4">
         <div className="grid grid-cols-1 gap-3">
-          {MOCK_VISUAL_ASSETS.map((asset) => (
+          {assets.map((asset: any) => (
             <div key={asset.id} className="glass-card-sm p-4 flex items-center gap-4">
               {/* Thumbnail */}
               <div className="w-20 h-14 rounded-lg bg-slate-800 border border-slate-700 flex items-center justify-center flex-shrink-0">
-                {asset.status === 'done' ? (
-                  <svg className="w-6 h-6 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" /></svg>
+                {asset.status === 'COMPLETED' ? (
+                  <img src={asset.url} alt={asset.format} className="w-full h-full object-cover rounded-lg" />
                 ) : (
                   <svg className="w-6 h-6 text-slate-600 animate-spin-slow" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>
                 )}
@@ -399,15 +389,18 @@ function VisualsPanel() {
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium text-slate-200">{asset.format} — {asset.locale}</p>
                 <div className="flex items-center gap-2 mt-1">
-                  {asset.status === 'done' ? (
+                  {asset.status === 'COMPLETED' ? (
                     <span className="badge-emerald text-xs">Visual Governance Passed ✓</span>
                   ) : (
-                    <span className="badge-amber text-xs">Generating…</span>
+                    <span className="badge-amber text-xs">Generating… ({asset.status})</span>
                   )}
                 </div>
               </div>
             </div>
           ))}
+          {assets.length === 0 && (
+             <p className="text-slate-500 text-center py-8 text-sm italic">Initializing visual generation...</p>
+          )}
         </div>
 
         <div className="p-3 rounded-lg bg-violet-500/8 border border-violet-500/20">
@@ -477,79 +470,88 @@ function ProcessingPanel() {
 // ───────────────────────────────────────────────────────────────
 export default function ExecutePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  const [execState, setExecState] = useState<ExecutionState>('PROCESSING');
+  const campaign = useQuery(api.campaigns.getById, { id: id as Id<"campaigns"> });
   const [elapsedMs, setElapsedMs] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval>>(null);
-
-  /**
-   * TODO — CONVEX REAL-TIME SUBSCRIPTION:
-   *
-   * Replace mock state management with a real-time Convex subscription:
-   *
-   *   const campaign = useQuery(api.campaigns.getCampaignById, { id: params.id });
-   *
-   *   useEffect(() => {
-   *     if (!campaign) return;
-   *     // Map campaign.status → ExecutionState
-   *     if (campaign.status === 'PENDING_GATE_1') setExecState('GATE_1_TEXT');
-   *     if (campaign.status === 'PENDING_GATE_2') setExecState('GATE_2_LOCALIZATION');
-   *     if (campaign.status === 'PENDING_GATE_3') setExecState('GATE_4_VISUALS');
-   *   }, [campaign?.status]);
-   *
-   * The FastAPI/LangGraph backend writes to Convex at each pause point,
-   * and Convex's real-time reactivity instantly updates this UI.
-   */
 
   useEffect(() => {
     timerRef.current = setInterval(() => setElapsedMs((t) => t + 100), 100);
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, []);
 
-  // Simulate pipeline auto-advancing to Gate 1 after 3s
-  useEffect(() => {
-    if (execState !== 'PROCESSING') return;
-    const t = setTimeout(() => setExecState('GATE_1_TEXT'), 3000);
-    return () => clearTimeout(t);
-  }, [execState]);
+  const execState: ExecutionState = campaign?.status as ExecutionState || 'PROCESSING';
 
   // ── Action handlers ─────────────────────────────────────────
-  const handleApprove = () => {
-    /**
-     * TODO — CONVEX MUTATION: approveGate
-     *
-     *   await convex.mutation(api.campaigns.approveGate, {
-     *     campaignId: params.id,
-     *     gate: execState === 'GATE_1_TEXT' ? 1 : 2,
-     *   });
-     *   // Then POST to FastAPI to resume the LangGraph checkpoint
-     */
-    if (execState === 'GATE_1_TEXT') setExecState('GATE_2_LOCALIZATION');
-    else if (execState === 'GATE_2_LOCALIZATION') setExecState('GATE_4_VISUALS');
+  const handleApprove = async () => {
+    const gate = execState === 'GATE_1_TEXT' ? 1 : 2;
+    try {
+      const response = await fetch(`http://localhost:8000/api/campaign/approve-gate-${gate}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ db_id: id }),
+      });
+      if (!response.ok) throw new Error('Action failed');
+    } catch (err) {
+      console.error(err);
+    }
   };
 
-  const handleReject = () => {
-    /**
-     * TODO — CONVEX MUTATION: rejectGate → restart pipeline from that phase
-     *   await convex.mutation(api.campaigns.rejectGate, { campaignId: params.id });
-     */
-    setExecState('PROCESSING');
+  const handleReject = async () => {
+    // For now, mapping reject to restart/stop or use a generic reject route
+    console.log("Reject clicked");
   };
 
-  const handleRegenerate = () => {
-    /**
-     * TODO: Signal FastAPI to re-run the relevant agent node in LangGraph.
-     *   await fetch('/api/regenerate', { method: 'POST', body: JSON.stringify({ campaignId: params.id }) });
-     */
-    setExecState('PROCESSING');
+  const handleRegenerate = async (feedback?: string) => {
+    try {
+      const response = await fetch('http://localhost:8000/api/campaign/reject-gate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          db_id: id,
+          gate_number: execState === 'GATE_1_TEXT' ? 1 : 2,
+          feedback: feedback
+        }),
+      });
+      if (!response.ok) throw new Error('Regeneration request failed');
+    } catch (err) {
+      console.error(err);
+    }
   };
 
   // ── Right panel renderer ─────────────────────────────────────
   const renderRightPanel = () => {
+    if (campaign === undefined) {
+      return (
+        <div className="flex flex-col flex-1 items-center justify-center p-12 text-slate-400">
+          <svg className="w-8 h-8 animate-spin mb-3 text-indigo-500" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+          </svg>
+          <p className="text-sm font-medium text-slate-300">Loading campaign context...</p>
+        </div>
+      );
+    }
+    if (!campaign) return <ProcessingPanel />;
+
     switch (execState) {
       case 'PROCESSING': return <ProcessingPanel />;
-      case 'GATE_1_TEXT': return <Gate1TextReview onApprove={handleApprove} onReject={handleReject} onRegenerate={handleRegenerate} />;
-      case 'GATE_2_LOCALIZATION': return <Gate2LocalizationReview onApprove={handleApprove} onReject={handleReject} onRegenerate={handleRegenerate} />;
-      case 'GATE_4_VISUALS': return <VisualsPanel />;
+      case 'GATE_1_TEXT': return <Gate1TextReview
+        campaignId={id}
+        masterText={campaign.master_text}
+        textAudit={campaign.text_audit}
+        onApprove={handleApprove}
+        onReject={handleReject}
+        onRegenerate={handleRegenerate}
+      />;
+      case 'GATE_2_LOCALIZATION': return <Gate2LocalizationReview
+        localizedTexts={campaign.localized_texts}
+        regionalAudit={campaign.regional_audit}
+        onApprove={handleApprove}
+        onReject={handleReject}
+        onRegenerate={handleRegenerate}
+      />;
+      case 'GATE_4_VISUALS': return <VisualsPanel visualAssets={campaign.visual_assets || []} />;
+      default: return <ProcessingPanel />;
     }
   };
 
@@ -575,30 +577,6 @@ export default function ExecutePage({ params }: { params: Promise<{ id: string }
         </div>
       </div>
 
-      {/* ── DEBUG STATE SWITCHER ─────────────────────────────────
-          Remove this panel before connecting the real backend.
-          It lets you manually cycle through all 4 UI states.
-      ─────────────────────────────────────────────────────────── */}
-      <div className="flex-shrink-0 flex items-center gap-2 px-6 py-2 border-b border-slate-800/60 bg-slate-900/40">
-        <span className="text-[10px] font-bold text-slate-600 uppercase tracking-widest mr-1">🛠 DEBUG STATE</span>
-        {([
-          ['PROCESSING', '1: Processing'],
-          ['GATE_1_TEXT', '2: Text Gate'],
-          ['GATE_2_LOCALIZATION', '3: Locale Gate'],
-          ['GATE_4_VISUALS', '4: Visuals'],
-        ] as [ExecutionState, string][]).map(([state, label]) => (
-          <button
-            key={state}
-            id={`debug-state-${state.toLowerCase()}`}
-            type="button"
-            onClick={() => setExecState(state)}
-            className={`px-3 py-1 rounded text-xs font-medium transition-all
-              ${execState === state ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-500 hover:text-slate-300 border border-slate-700'}`}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
 
       {/* ── Split Screen ──────────────────────────────────────── */}
       <div className="flex flex-1 min-h-0">

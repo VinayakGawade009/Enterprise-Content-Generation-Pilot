@@ -2,6 +2,8 @@
 
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import { useMutation } from 'convex/react';
+import { api } from '../../../../convex/_generated/api';
 
 // ─── Types ──────────────────────────────────────────────────────
 interface Region {
@@ -110,6 +112,8 @@ function OAuthButton({ icon, label, connected, id }: { icon: React.ReactNode; la
 export default function WorkspaceSetupPage() {
   const router = useRouter();
   const [isSaving, setIsSaving] = useState(false);
+  
+  const createOrUpdateWorkspace = useMutation(api.workspace.createOrUpdateWorkspace);
 
   // ── Phase 0 State: market_identity.json fields ──────────────
   const [businessModel, setBusinessModel] = useState<'B2B' | 'B2C' | 'Hybrid'>('B2B');
@@ -140,32 +144,30 @@ export default function WorkspaceSetupPage() {
   const handleSave = async () => {
     setIsSaving(true);
 
-    /**
-     * TODO — CONVEX MUTATION: saveWorkspaceSetup
-     *
-     * Call: await convex.mutation(api.workspace.createOrUpdateWorkspace, {
-     *   market_identity: {
-     *     workspace_id: crypto.randomUUID(),
-     *     business_model: businessModel,
-     *     approved_regions: regions,
-     *     approved_personas: personas,
-     *   },
-     *   brand_guidelines: {
-     *     colors: { primary_hex: primaryHex, secondary_hex: secondaryHex },
-     *     typography: { primary_font: primaryFont, secondary_font: 'Arial, sans-serif' },
-     *     assets: { logo_urls: [] },
-     *   },
-     *   compliance_rules: {
-     *     forbidden_phrases: forbiddenPhrases,
-     *     mandatory_disclaimers_by_region: {},
-     *     mandatory_disclaimers_by_topic: {},
-     *   },
-     * });
-     */
-
-    await new Promise((r) => setTimeout(r, 1200)); // Mock save delay
-    setIsSaving(false);
-    router.push('/main');
+    try {
+      await createOrUpdateWorkspace({
+        market_identity: {
+          workspace_id: crypto.randomUUID(),
+          business_model: businessModel,
+          approved_regions: regions,
+          approved_personas: personas,
+        },
+        brand_guidelines: {
+          colors: { primary_hex: primaryHex, secondary_hex: secondaryHex },
+          typography: { primary_font: primaryFont, secondary_font: 'Arial, sans-serif' },
+          assets: { logo_urls: [] },
+        },
+        compliance_rules: {
+          forbidden_phrases: forbiddenPhrases,
+          mandatory_disclaimers_by_region: {},
+          mandatory_disclaimers_by_topic: {},
+        },
+      });
+      router.push('/main');
+    } catch (err) {
+      console.error(err);
+      setIsSaving(false);
+    }
   };
 
   const addRegion = () => {

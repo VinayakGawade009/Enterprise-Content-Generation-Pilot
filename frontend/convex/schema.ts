@@ -48,12 +48,20 @@ export default defineSchema({
       target_regions: v.array(v.string()),
       target_personas: v.array(v.string()),
       desired_formats: v.array(v.string()),
+      enable_localization: v.boolean(),
+      selected_language: v.optional(v.string()),
     }),
-    status: v.string(), // e.g., "DRAFTING", "PENDING_GATE_1", "PUBLISHED"
+    status: v.string(), // e.g., "DRAFTING", "PENDING_GATE_1", "PENDING_GATE_2", "PENDING_GATE_3", "PUBLISHED"
     master_text: v.optional(
       v.object({
         text: v.string(),
         character_count: v.number(),
+      })
+    ),
+    text_audit: v.optional(
+      v.object({
+        status: v.string(),
+        violations: v.array(v.any()),
       })
     ),
     localized_texts: v.optional(
@@ -67,6 +75,15 @@ export default defineSchema({
         character_counts: v.record(v.string(), v.number()),
       })
     ),
-    visual_assets: v.optional(v.array(v.string())),
+    regional_audit: v.optional(v.any()),
+    visual_assets: v.optional(v.array(v.object({
+      id: v.string(),
+      locale: v.string(),
+      format: v.string(),
+      url: v.string(),
+      status: v.string(),
+    }))),
+    visual_audit: v.optional(v.any()),
+    error: v.optional(v.string()),
   }),
 });

@@ -52,3 +52,17 @@ Thumbs.db
 prompts/
 prompts/*
 docs/
+
+# ========================
+# Build Cache & Generated
+# ========================
+*.tsbuildinfo
+frontend/convex/_generated/ai/
+
+# ========================
+# Local AI Configs
+# ========================
+.agents/
+AGENTS.md
+CLAUDE.md
+skills-lock.json

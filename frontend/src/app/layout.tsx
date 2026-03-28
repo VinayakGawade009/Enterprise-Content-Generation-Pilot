@@ -7,6 +7,8 @@ export const metadata: Metadata = {
     'AI-powered enterprise content generation with multi-stage governance and Human-in-the-Loop review.',
 };
 
+import { ConvexClientProvider } from '../components/ConvexClientProvider';
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className="dark">
@@ -19,7 +21,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         />
       </head>
       <body className="min-h-screen antialiased">
-        {children}
+        <ConvexClientProvider>
+          {children}
+        </ConvexClientProvider>
       </body>
     </html>
   );
