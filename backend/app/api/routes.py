@@ -3,7 +3,7 @@ from pydantic import BaseModel
 from typing import Optional, List
 from app.models.campaign import CampaignBrief
 from app.models.admin_rules import ComplianceRules
-from app.workflows.main_graph import app as graph_app
+from app.workflows.main_graph import graph_app
 from app.workflows.state import GraphState
 
 router = APIRouter()

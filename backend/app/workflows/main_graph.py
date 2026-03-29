@@ -1,13 +1,6 @@
 from typing import List, Dict
 from langgraph.graph import StateGraph, START, END
-from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
-import asyncio, os as _os
-
-# ── Persistent SQLite checkpointer ────────────────────────────────────────────
-# Uses a local file so paused states survive uvicorn hot-reloads.
-_DB_PATH = _os.path.join(_os.path.dirname(__file__), "..", "..", "checkpoints.db")
-_graph_singleton = None
-_graph_lock = asyncio.Lock()
+from langgraph.checkpoint.memory import MemorySaver
 
 from .state import GraphState
 from app.agents.knowledge_to_content import generate_master_draft
@@ -205,84 +198,50 @@ async def node_visual_governance(state: GraphState):
     
     return {"current_status": "GATE_4_VISUALS"}
 
-# ───────────────────────────────────────────────────────────────
-# ROUTING & CONSTRUCTION
-# ───────────────────────────────────────────────────────────────
-
-def route_after_text_audit(state: GraphState):
-    # If the audit fails, the orchestrator should automatically retry node_draft_content
-    text_audit = state.get("text_audit")
-    if text_audit and isinstance(text_audit, dict) and text_audit.get("status") == "FAILED":
-        return "node_draft_content"
-    if hasattr(text_audit, "status") and text_audit.status == "FAILED":
-        return "node_draft_content"
-    return "node_localize_content"
-
-def route_after_visual_audit(state: GraphState):
-    # Loop back logic if audit fails
+def route_after_visual_audit(state: GraphState) -> str:
+    """
+    Conditional routing: Loop back to generation if visual audit fails.
+    """
     visual_audit = state.get("visual_audit")
-    if visual_audit and isinstance(visual_audit, dict) and visual_audit.get("status") == "FAILED":
-        return "node_visual_generation"
+    if visual_audit:
+        # Handle both dict and object types safely
+        status = visual_audit.get("status") if isinstance(visual_audit, dict) else getattr(visual_audit, "status", "")
+        if status == "REJECTED":
+            return "node_visual_generation"
     return END
 
-def _build_graph(checkpointer):
-    """Pure graph construction — checkpointer injected by get_graph()."""
-    builder = StateGraph(GraphState)
+# ==========================================
+# Graph Builder Initialization & Compilation
+# ==========================================
 
-    builder.add_node("node_draft_content", node_draft_content)
-    builder.add_node("node_text_governance", node_text_governance)
-    builder.add_node("node_localize_content", node_localize_content)
-    builder.add_node("node_regional_governance", node_regional_governance)
-    builder.add_node("node_visual_generation", node_visual_generation)
-    builder.add_node("node_visual_governance", node_visual_governance)
+# Use MemorySaver for the demo — avoids AsyncSqliteSaver context-manager TypeError
+memory = MemorySaver()
 
-    builder.add_edge(START, "node_draft_content")
-    builder.add_edge("node_draft_content", "node_text_governance")
-    builder.add_conditional_edges("node_text_governance", route_after_text_audit)
+builder = StateGraph(GraphState)
 
-    builder.add_edge("node_localize_content", "node_regional_governance")
-    builder.add_edge("node_regional_governance", "node_visual_generation")
-    builder.add_edge("node_visual_generation", "node_visual_governance")
-    builder.add_conditional_edges("node_visual_governance", route_after_visual_audit)
+# Add Nodes
+builder.add_node("node_draft_content", node_draft_content)
+builder.add_node("node_text_governance", node_text_governance)
+builder.add_node("node_localize_content", node_localize_content)
+builder.add_node("node_regional_governance", node_regional_governance)
+builder.add_node("node_visual_generation", node_visual_generation)
+builder.add_node("node_visual_governance", node_visual_governance)
 
-    return builder.compile(
-        checkpointer=checkpointer,
-        interrupt_before=[
-            "node_localize_content",  # Pause for Gate 1 review
-            "node_visual_generation", # Pause for Gate 2 review
-        ]
-    )
+# Build Edge Pipeline
+builder.add_edge(START, "node_draft_content")
+builder.add_edge("node_draft_content", "node_text_governance")
+builder.add_edge("node_text_governance", "node_localize_content")
+builder.add_edge("node_localize_content", "node_regional_governance")
+builder.add_edge("node_regional_governance", "node_visual_generation")
+builder.add_edge("node_visual_generation", "node_visual_governance")  # required — no dangling node
+builder.add_conditional_edges("node_visual_governance", route_after_visual_audit)
 
-
-async def get_graph():
-    """
-    Returns the compiled LangGraph app backed by a persistent AsyncSqliteSaver.
-    The graph is built once and cached as a module-level singleton so the DB
-    connection is reused across requests without being re-opened each time.
-    """
-    global _graph_singleton
-    async with _graph_lock:
-        if _graph_singleton is None:
-            checkpointer = AsyncSqliteSaver.from_conn_string(_DB_PATH)
-            _graph_singleton = _build_graph(checkpointer)
-    return _graph_singleton
-
-
-# ── Backwards-compat shim ─────────────────────────────────────────────────────
-# routes.py imports `app` directly; keep it working by exposing a proxy object
-# whose async methods resolve the singleton on first call.
-class _GraphProxy:
-    """Thin proxy so 'from main_graph import app' keeps working in routes.py."""
-    async def ainvoke(self, *args, **kwargs):
-        g = await get_graph()
-        return await g.ainvoke(*args, **kwargs)
-
-    async def aget_state(self, *args, **kwargs):
-        g = await get_graph()
-        return await g.aget_state(*args, **kwargs)
-
-    async def aupdate_state(self, *args, **kwargs):
-        g = await get_graph()
-        return await g.aupdate_state(*args, **kwargs)
-
-app = _GraphProxy()
+# Compile the Graph with HITL pauses
+graph_app = builder.compile(
+    checkpointer=memory,
+    interrupt_before=[
+        "node_text_governance",      # Gate 1: pause after draft, before compliance audit
+        "node_regional_governance",  # Gate 2: pause after localization, before LQA
+        "node_visual_governance",    # Gate 3: pause after visual gen, before visual audit
+    ]
+)
