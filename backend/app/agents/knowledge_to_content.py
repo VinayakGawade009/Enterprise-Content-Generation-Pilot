@@ -13,13 +13,19 @@ async def generate_master_draft(brief, facts, compliance_rules, feedback: str = 
     try:
         client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
         
-        persona = ", ".join(brief.target_personas) if brief.target_personas else "General Audience"
-        regions = ", ".join(brief.target_regions) if brief.target_regions else "Global"
+        persona_list = brief.get("target_personas", [])
+        persona = ", ".join(persona_list) if persona_list else "General Audience"
+        
+        regions_list = brief.get("target_regions", [])
+        regions = ", ".join(regions_list) if regions_list else "Global"
+        
+        forbidden_list = compliance_rules.get("forbidden_phrases", []) if compliance_rules else []
+        forbidden_text = ", ".join(forbidden_list) if forbidden_list else "None"
         
         system_prompt = (
             f"You are an expert copywriter targeting {persona} in {regions}. "
             "Write vibrant, engaging, and highly persuasive content. "
-            f"You MUST absolutely AVOID using: {', '.join(compliance_rules.forbidden_phrases) if compliance_rules and compliance_rules.forbidden_phrases else 'None'}. "
+            f"You MUST absolutely AVOID using: {forbidden_text}. "
             "Align strictly with the creative objective."
         )
         
@@ -27,8 +33,10 @@ async def generate_master_draft(brief, facts, compliance_rules, feedback: str = 
         facts_text = "\n".join([f"- {f.get('source', 'Context')}: {f.get('fact', '')}" for f in facts]) if facts else "No internal facts available."
         assets_text = "\n".join([f"- Asset: {a.get('name', 'File')}" for a in assets]) if assets else "No assets provided."
         
+        creative_objective = brief.get("creative_objective", "")
+        
         user_prompt = (
-            f"Creative Objective: {brief.creative_objective}\n\n"
+            f"Creative Objective: {creative_objective}\n\n"
             f"Semantic Context (from Qdrant):\n{facts_text}\n\n"
             f"User Uploaded Assets:\n{assets_text}\n\n"
             f"Human-in-the-Loop Feedback to incorporate:\n{feedback}\n\n"

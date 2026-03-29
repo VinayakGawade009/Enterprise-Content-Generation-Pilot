@@ -1,10 +1,15 @@
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from typing import Optional, List
+import os
+
 from app.models.campaign import CampaignBrief
 from app.models.admin_rules import ComplianceRules
-from app.workflows.main_graph import graph_app
+from app.workflows.main_graph import builder
 from app.workflows.state import GraphState
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+
+_DB_PATH = os.path.join(os.path.dirname(__file__), "..", "..", ".checkpoints.sqlite")
 
 router = APIRouter()
 
@@ -32,7 +37,6 @@ class StopRequest(BaseModel):
 @router.post("/api/campaign/initiate")
 async def initiate_campaign(req: InitiateRequest, background_tasks: BackgroundTasks):
     try:
-        # Extract rules from workspace payload
         compliance_rules_data = req.workspace_rules.get("compliance_rules", {})
         compliance_rules = ComplianceRules(
             forbidden_phrases=compliance_rules_data.get("forbidden_phrases", []),
@@ -52,8 +56,8 @@ async def initiate_campaign(req: InitiateRequest, background_tasks: BackgroundTa
         initial_state: GraphState = {
             "campaign_id": req.campaign_id,
             "db_id": req.db_id,
-            "brief": brief.model_dump(),           # FIXED: Store as plain dict for LangGraph serialization
-            "compliance_rules": compliance_rules.model_dump(),  # FIXED: Store as plain dict
+            "brief": brief.model_dump(),
+            "compliance_rules": compliance_rules.model_dump(),
             "draft_text": "",
             "text_audit": None,
             "locked_master_text": "",
@@ -70,17 +74,21 @@ async def initiate_campaign(req: InitiateRequest, background_tasks: BackgroundTa
 
         config = {"configurable": {"thread_id": req.db_id}}
 
-        # FIXED: Catch graph crashes and update UI
         async def run_graph():
             try:
-                await graph_app.ainvoke(initial_state, config)
+                # Compile graph securely using an async context checkpointer
+                async with AsyncSqliteSaver.from_conn_string(_DB_PATH) as checkpointer:
+                    graph_app = builder.compile(
+                        checkpointer=checkpointer,
+                        interrupt_before=["node_localize_content", "node_visual_generation"]
+                    )
+                    await graph_app.ainvoke(initial_state, config)
             except Exception as e:
                 from app.services.convex_sync import update_convex_campaign
                 await update_convex_campaign(req.db_id, {"status": "ERROR", "error": str(e)})
 
         background_tasks.add_task(run_graph)
 
-        # Immediately return so the UI can transition to the execution loading screen
         return {
             "db_id": req.db_id,
             "status": "PROCESSING"
@@ -92,42 +100,56 @@ async def initiate_campaign(req: InitiateRequest, background_tasks: BackgroundTa
 
 async def handle_gate_resume(db_id: str, feedback: Optional[str], gate_number: Optional[int], background_tasks: BackgroundTasks):
     config = {"configurable": {"thread_id": db_id}}
-    state_info = await graph_app.aget_state(config)
-
-    if not state_info.next:
-        raise HTTPException(status_code=400, detail="Campaign not in a waiting state")
-
-    if feedback:
-        # REJECT / REGENERATE: Rewind to the drafting node so the agent regenerates with feedback
-        target_node = "node_draft_content" if gate_number == 1 else "node_localize_content"
-        await graph_app.aupdate_state(config, {"feedback": feedback}, as_node=target_node)
-    else:
-        # APPROVE: Lock the current text and resume forward — do NOT rewind
-        if gate_number == 1:
-            locked_text = state_info.values.get("draft_text", "")
-            await graph_app.aupdate_state(
-                config,
-                {"locked_master_text": locked_text, "feedback": ""},
-                as_node="node_text_governance"
+    
+    try:
+        async with AsyncSqliteSaver.from_conn_string(_DB_PATH) as checkpointer:
+            graph_app = builder.compile(
+                checkpointer=checkpointer,
+                interrupt_before=["node_localize_content", "node_visual_generation"]
             )
-        else:
-            # Gate 2 approval — just clear feedback and resume
-            await graph_app.aupdate_state(config, {"feedback": ""}, as_node="node_regional_governance")
+            
+            state_info = await graph_app.aget_state(config)
 
-    # Catch graph crashes and surface them to the UI
-    async def resume_graph():
-        try:
-            await graph_app.ainvoke(None, config)
-        except Exception as e:
-            from app.services.convex_sync import update_convex_campaign
-            await update_convex_campaign(db_id, {"status": "ERROR", "error": str(e)})
+            if not state_info.next:
+                raise HTTPException(status_code=400, detail="Campaign not in a waiting state")
 
-    background_tasks.add_task(resume_graph)
+            if feedback:
+                target_node = "node_draft_content" if gate_number == 1 else "node_localize_content"
+                await graph_app.aupdate_state(config, {"feedback": feedback}, as_node=target_node)
+            else:
+                if gate_number == 1:
+                    locked_text = state_info.values.get("draft_text", "")
+                    await graph_app.aupdate_state(
+                        config,
+                        {"locked_master_text": locked_text, "feedback": ""},
+                        as_node="node_text_governance"
+                    )
+                else:
+                    await graph_app.aupdate_state(config, {"feedback": ""}, as_node="node_regional_governance")
 
-    return {
-        "db_id": db_id,
-        "status": "RESUMED_PROCESSING"
-    }
+            # Fire resume sequentially afterwards using its own instance
+            async def resume_graph():
+                try:
+                    async with AsyncSqliteSaver.from_conn_string(_DB_PATH) as checkpointer_resume:
+                        graph_app_resume = builder.compile(
+                            checkpointer=checkpointer_resume,
+                            interrupt_before=["node_localize_content", "node_visual_generation"]
+                        )
+                        await graph_app_resume.ainvoke(None, config)
+                except Exception as e:
+                    from app.services.convex_sync import update_convex_campaign
+                    await update_convex_campaign(db_id, {"status": "ERROR", "error": str(e)})
+
+            background_tasks.add_task(resume_graph)
+
+        return {
+            "db_id": db_id,
+            "status": "RESUMED_PROCESSING"
+        }
+    except Exception as e:
+        import traceback
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Resume failed: {str(e)}")
 
 
 @router.post("/api/campaign/approve-gate-1")
@@ -140,16 +162,18 @@ async def approve_gate_2(req: GateRequest, background_tasks: BackgroundTasks):
 
 @router.post("/api/campaign/reject-gate")
 async def reject_gate(req: GateRequest, background_tasks: BackgroundTasks):
-    """Handles 'Regenerate' and 'Regenerate with feedback'"""
-
     return await handle_gate_resume(req.db_id, req.feedback, req.gate_number, background_tasks)
 
 @router.post("/api/campaign/stop")
 async def stop_campaign(req: StopRequest):
     try:
         config = {"configurable": {"thread_id": req.db_id}}
-        # Update the graph state to forcibly halt processing
-        await graph_app.aupdate_state(config, {"current_status": "STOPPED"}, as_node=None)
+        async with AsyncSqliteSaver.from_conn_string(_DB_PATH) as checkpointer:
+            graph_app = builder.compile(
+                checkpointer=checkpointer,
+                interrupt_before=["node_localize_content", "node_visual_generation"]
+            )
+            await graph_app.aupdate_state(config, {"current_status": "STOPPED"}, as_node=None)
         return {"status": "success", "message": "Campaign execution stopped."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

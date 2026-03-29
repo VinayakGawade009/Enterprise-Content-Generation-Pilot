@@ -1,0 +1,7 @@
+Traceback (most recent call last):
+  File "C:\Users\adity\OneDrive\Desktop\Project_ECGP\ECGP\ecgp-workspace\backend\app\api\routes.py", line 140, in approve_gate_1
+    return await handle_gate_resume(req.db_id, None, 1, background_tasks)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\adity\OneDrive\Desktop\Project_ECGP\ECGP\ecgp-workspace\backend\app\api\routes.py", line 102, in handle_gate_resume
+    raise HTTPException(status_code=400, detail="Campaign not in a waiting state")
+fastapi.exceptions.HTTPException: 400: Campaign not in a waiting state
